@@ -1,5 +1,12 @@
 import { err, ok, Result } from "neverthrow";
-import { map, Observable, of, switchMap, type UnaryFunction } from "rxjs";
+import {
+  catchError,
+  map,
+  Observable,
+  of,
+  switchMap,
+  type UnaryFunction,
+} from "rxjs";
 
 function mapResult<T, U, E = Error>(
   project: (v: T) => U,
@@ -19,22 +26,83 @@ function switchMapResult<T, U, E1 = Error, E2 = Error>(
   });
 }
 
-// TEST
+type ExtractErrFromSource<
+  T extends Record<string, Observable<Result<any, any>>>,
+> = T[keyof T] extends Observable<Result<any, infer E>> ? E : never;
 
-function getFoo(): Observable<Result<{ foo: number }, "foo:err">> {
-  return of(Math.random() > 0.5 ? ok({ foo: 1 }) : err("foo:err"));
-}
+type ExtractOkFromSource<
+  T extends Record<string, Observable<Result<any, any>>>,
+> = {
+  [Key in keyof T]: T[Key] extends Observable<Result<infer O, any>> ? O : never;
+};
 
-function getBar(): Observable<Result<{ bar: string }, "bar:err">> {
-  return of(Math.random() > 0.5 ? ok({ bar: "1" }) : err("bar:err"));
-}
+function forkJoinResult<T extends Record<string, Observable<Result<any, any>>>>(
+  sources: T,
+): Observable<Result<ExtractOkFromSource<T>, ExtractErrFromSource<T>>> {
+  const entries = Object.entries(sources) as [
+    string,
+    Observable<Result<any, any>>,
+  ][];
 
-getFoo()
-  .pipe(switchMapResult(() => getBar()))
-  .subscribe((res) => {
-    if (res.isOk()) {
-      console.log("ok:", res.value);
-    } else {
-      console.error("err:", res.error);
+  return new Observable((subscriber) => {
+    const acc: Record<string, any> = {};
+
+    let pending = entries.length;
+
+    // handle empty object
+    if (pending === 0) {
+      subscriber.next(ok({} as any));
+      subscriber.complete();
+      return;
+    }
+
+    for (const [key, obs$] of entries) {
+      obs$.pipe(catchError((error) => of(err(error)))).subscribe({
+        next: (result) => {
+          if (result.isErr()) {
+            subscriber.next(result);
+            subscriber.complete();
+            return;
+          }
+
+          acc[key] = result.value;
+
+          pending--;
+
+          if (pending === 0) {
+            subscriber.next(ok(acc) as any);
+            subscriber.complete();
+          }
+        },
+      });
     }
   });
+}
+
+// TEST
+
+function getFoo() {
+  return of(Math.random() > 0.5 ? ok("foo ok" as const) : err("foo:err"));
+}
+
+function getBar() {
+  return of(Math.random() > 0.5 ? ok("bar ok" as const) : err("bar:err"));
+}
+
+forkJoinResult({ foo: getFoo(), bar: getBar() }).subscribe((res) => {
+  if (res.isOk()) {
+    console.log("ok:", res.value);
+  } else {
+    console.error("err:", res.error);
+  }
+});
+
+// getFoo()
+//   .pipe(switchMapResult(() => getBar()))
+//   .subscribe((res) => {
+//     if (res.isOk()) {
+//       console.log("ok:", res.value);
+//     } else {
+//       console.error("err:", res.error);
+//     }
+//   });
