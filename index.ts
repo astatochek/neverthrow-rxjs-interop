@@ -8,6 +8,10 @@ import {
   type UnaryFunction,
 } from "rxjs";
 
+type Prettify<T> = {
+  [K in keyof T]: T[K];
+} & {};
+
 function mapResult<T, U, E = Error>(
   project: (v: T) => U,
 ): UnaryFunction<Observable<Result<T, E>>, Observable<Result<U, E>>> {
@@ -38,7 +42,7 @@ type ExtractOkFromSource<
 
 function forkJoinResult<T extends Record<string, Observable<Result<any, any>>>>(
   sources: T,
-): Observable<Result<ExtractOkFromSource<T>, ExtractErrFromSource<T>>> {
+): Observable<Result<Prettify<ExtractOkFromSource<T>>, ExtractErrFromSource<T>>> {
   const entries = Object.entries(sources) as [
     string,
     Observable<Result<any, any>>,
